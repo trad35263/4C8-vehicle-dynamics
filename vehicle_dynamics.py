@@ -105,8 +105,18 @@ class Inputs:
     N = 100
 
     # default plotting parameters
-    figsize = (9, 4)
+    ax_width = 7
+    ax_height = 5
+    left_margin = 1
+    right_margin = 0.5
+    bottom_margin = 0.5
+    plot_height = 0.8 * ax_height
+
+    # more plotting parameters
+    titlesize = 14
+    fontsize = 12
     alpha = 0.4
+    dpi = 300
 
     # experiment values
     metres_per_volt = 1 / 12            # m / V
@@ -126,6 +136,9 @@ class Results:
         self.c_1 = c_1
         self.m_2 = m_2
         self.c_2 = c_2
+
+        # create empty constants dictionary
+        self.constants = {}
     
     def forwards_calibrate(self, x):
         """Returns the forwards-calibrated force reading for a given transducer reading."""
@@ -145,7 +158,7 @@ class Results:
         data = data.transpose()
 
         # create plot
-        fig, ax = plt.subplots(figsize = Inputs.figsize)
+        fig, ax = plt.subplots()
 
         # get colours iterater
         colours = itertools.cycle(plt.cm.tab10.colors)
@@ -187,19 +200,21 @@ class Results:
             # plot data
             ax.plot(
                 x_masked, y_masked, color = colour,
-                label = f"Motor setting {setting}: mean = {mean_value:.3g}"
+                label = f"Motor setting {setting}: mean = {mean_value:.3g} V"
             )
 
         # configure plot
         ax.grid()
-        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        ax.set_xlabel("Displacement Transducer Reading (V)")
-        ax.set_ylabel('Side Force Transducer Reading (V)')
-        ax.set_title("Effect of Speed on Side Force")
-        plt.tight_layout()
+        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        ax.set_xlabel("Displacement Transducer Reading (V)", fontsize = Inputs.fontsize)
+        ax.set_ylabel("Side Force Transducer Reading (V)", fontsize = Inputs.fontsize)
+        ax.set_title("Effect of Speed on Side Force", fontsize = Inputs.titlesize)
+
+        # save plot
+        save_figure(fig, ax, f"effect_of_speed_transducer.png")
 
         # create bar chart
-        fig, ax = plt.subplots(figsize = Inputs.figsize)
+        fig, ax = plt.subplots()
 
         # populate bar chart
         mean_values_N = self.forwards_calibrate(mean_values)
@@ -208,10 +223,12 @@ class Results:
 
         # configure plot
         ax.grid(alpha = Inputs.alpha)
-        ax.set_xlabel("Motor Setting")
-        ax.set_ylabel('Mean Side Force (N)')
-        ax.set_title("Effect of Speed on Side Force")
-        plt.tight_layout()
+        ax.set_xlabel("Motor Setting", fontsize = Inputs.fontsize)
+        ax.set_ylabel("Steady State Side Force (N)", fontsize = Inputs.fontsize)
+        ax.set_title("Effect of Speed on Side Force", fontsize = Inputs.fontsize)
+
+        # save plot
+        save_figure(fig, ax, f"effect_of_speed_forces.png")
 
     # effect_of_normal_load function
     def effect_of_normal_load(self, weight):
@@ -221,7 +238,7 @@ class Results:
         data = data.transpose()
 
         # create plot
-        fig, ax = plt.subplots(figsize = Inputs.figsize)
+        fig, ax = plt.subplots()
 
         # sort yaw angles in ascending order
         yaw_angles = getattr(Raw_data, f"yaw_angles_{weight}")
@@ -236,28 +253,32 @@ class Results:
 
             # get range of values
             index = sorted_indices[sorted_index]
-            #mean_values[sorted_index] = 0.5 * (np.max(data[2 * index + 1]) - np.min(data[2 * index + 1]))
             mean_values[sorted_index] = np.max(data[2 * index + 1])
 
             # plot data
             ax.plot(
                 data[2 * index], data[2 * index + 1],
-                label = f"Yaw angle = {yaw_angle}°, Mean value = {mean_values[sorted_index]:.3g} V"
+                label = rf"$\delta$ = {yaw_angle}°, Mean = {mean_values[sorted_index]:.3g} V"
             )
 
         # configure plot
         ax.grid()
-        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        ax.set_xlabel("Displacement Transducer Reading (V)")
-        ax.set_ylabel('Side Force Transducer Reading (V)')
-        ax.set_title(f"Effect of Normal Load on Steady State Side Force {weight.replace('_', ' ')}")
-        plt.tight_layout()
+        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        ax.set_xlabel("Displacement Transducer Reading (V)", fontsize = Inputs.fontsize)
+        ax.set_ylabel('Side Force Transducer Reading (V)', fontsize = Inputs.fontsize)
+        ax.set_title(
+            f"Effect of Normal Load on Steady State Side Force (W = {weight.replace('_', ' ')})",
+            fontsize = Inputs.titlesize
+        )
+
+        # save plot
+        save_figure(fig, ax, f"effect_of_normal_load_transducer_{weight}.png")
 
         # yaw angle-side force plot does not yet exist
         if not hasattr(self, "fig"):
 
             # create plot
-            self.fig, self.ax = plt.subplots(figsize = Inputs.figsize)
+            self.fig, self.ax = plt.subplots()
 
         # calibrate transducer readings as forwards value
         mean_values_N = self.forwards_calibrate(mean_values)
@@ -267,25 +288,44 @@ class Results:
 
         # plot mean side force against lateral creep
         self.ax.plot(
-            lateral_creeps, mean_values_N, label = f"Normal load = {weight.replace('_', ' ')}"
+            lateral_creeps, mean_values_N, label = f"W = {weight.replace('_', ' ')}"
         )
 
-        # linear regression
-        m, c = np.polyfit(np.insert(lateral_creeps, 0, 0), np.insert(mean_values_N, 0, 0), 1)
-        xx = np.linspace(np.min(lateral_creeps), np.max(lateral_creeps), Inputs.N)
+        # exponential best fit
+        def exponential_fit(x, A, B):
 
-        # plot line of best fit
+            return A * (1 - np.exp(-x / B))
+
+        # use curve fit to determine unknown parameters
+        params, cov = curve_fit(
+            exponential_fit, lateral_creeps, mean_values_N,
+            p0 = [max(mean_values_N), max(lateral_creeps)]
+        )
+
+        # extract constants
+        self.constants[weight] = {
+            "mu": params[0] / (float(weight.replace('_kg', '')) * Inputs.g),
+            "C_22": params[0] / params[1]
+        }
+        
+        # plot exponential best fit
+        xx = np.linspace(np.min(lateral_creeps), np.max(lateral_creeps), Inputs.N)
         self.ax.plot(
-            xx, m * xx + c, label = f"Line of best fit {weight}"
+            xx, exponential_fit(xx, params[0], params[1]),
+            label = (
+                rf"Exponential fit: $\mu$Z = {params[0]:.3g} N, $\alpha_0$ = {params[1]:.3g}"
+                "\n"
+                rf"$\mu$ = {self.constants[weight]['mu']:.3g}, "
+                rf"$C_{{22}}$ = {self.constants[weight]['C_22']:.3g} N"
+            )
         )
 
         # configure plot
         self.ax.grid(True)
-        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        self.ax.set_xlabel("Lateral Creep")
-        self.ax.set_ylabel("Mean Side Force (N)")
-        self.ax.set_title("Effect of Normal Load on Side Force")
-        plt.tight_layout()
+        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        self.ax.set_xlabel("Lateral Creep", fontsize = Inputs.fontsize)
+        self.ax.set_ylabel("Steady State Side Force (N)", fontsize = Inputs.fontsize)
+        self.ax.set_title("Effect of Normal Load on Side Force", fontsize = Inputs.titlesize)
 
     # no_load_creep function
     def no_load_creep(self):
@@ -308,7 +348,7 @@ class Results:
 
         # create empty lists of data
         self.weights = []
-        creep_coefficients = []
+        longitudinal_creep = []
 
         # loop for each applied torque value
         for key, value in data.items():
@@ -324,29 +364,51 @@ class Results:
             x_2 = data[key]["x_2"]
 
             # calculate and store creep coefficient
-            creep_coefficients.append(
+            longitudinal_creep.append(
                 (x_2 - x_1) / (x_max - x_1 + x_max - x_2)
             )
 
         # convert weights to tyre longitudinal forces
-        self.longitudinal_loads = np.array(self.weights) * Inputs.g * Inputs.drum_radius / self.rolling_radius
+        self.longitudinal_force = np.array(self.weights) * Inputs.g * Inputs.drum_radius / self.rolling_radius
 
         # plot does not yet exist
         if not hasattr(self, "fig"):
 
             # create plot
-            self.fig, self.ax = plt.subplots(figsize = Inputs.figsize)
+            self.fig, self.ax = plt.subplots()
         
         # plot data
-        self.ax.plot(self.longitudinal_loads, creep_coefficients, label = rf"W = {weight.replace('_', ' ')}, $\delta$ = 0")
+        self.ax.plot(longitudinal_creep, self.longitudinal_force, label = rf"W = {weight.replace('_', ' ')}, $\delta$ = 0")
+
+        # mask values that are not monotonically increasing
+        longitudinal_creep = np.array(longitudinal_creep)
+        mask = longitudinal_creep == np.maximum.accumulate(longitudinal_creep)
+
+        # perform linear regression
+        m, c = np.polyfit(longitudinal_creep[mask], self.longitudinal_force[mask], 1)
+        xx = np.linspace(
+            np.min(longitudinal_creep[mask]), np.max(longitudinal_creep[mask]), Inputs.N
+        )
+
+        # store longitudinal creep coefficient
+        self.constants[weight]["C_11"] = m
+
+        # plot line of best fit
+        self.ax.plot(
+            xx, m * xx + c,
+            label = (
+                rf"Line of best fit: m = {m:.3g} N, c = {c:.3g} N"
+                "\n"
+                rf"$C_{{11}}$ = {m:.3g} N"
+            )
+        )
         
         # configure plot
         self.ax.grid(True)
-        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        self.ax.set_xlabel("Longitudinal Force (N)")
-        self.ax.set_ylabel("Longitudinal Creep")
-        self.ax.set_title("Creep with an Applied Torque")
-        plt.tight_layout()
+        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        self.ax.set_xlabel("Longitudinal Creep", fontsize = Inputs.fontsize)
+        self.ax.set_ylabel("Longitudinal Force (N)", fontsize = Inputs.fontsize)
+        self.ax.set_title("Creep with an Applied Torque", fontsize = Inputs.titlesize)
 
     # lateral_and_longitudinal_creep function
     def lateral_and_longitudinal_creep(self, yaw_angle):
@@ -354,8 +416,8 @@ class Results:
         # read data from spreadsheet
         data = Raw_data.longitudinal_creep[f"delta = {yaw_angle}"][f"W = 3 kg"]
 
-        # create empty list for creep coefficients
-        creep_coefficients = []
+        # create empty list for longitudinal creep
+        longitudinal_creep = []
 
         # loop for each applied torque value
         for key, value in data.items():
@@ -366,7 +428,7 @@ class Results:
             x_2 = data[key]["x_2"]
 
             # calculate and store creep coefficient
-            creep_coefficients.append(
+            longitudinal_creep.append(
                 (x_2 - x_1) / (x_max - x_1 + x_max - x_2)
             )
             data[key]["longitudinal_creep"] = (x_2 - x_1) / (x_max - x_1 + x_max - x_2)
@@ -375,29 +437,54 @@ class Results:
         if not hasattr(self, "fig"):
 
             # create plot
-            self.fig, self.ax = plt.subplots(figsize = Inputs.figsize)
+            self.fig, self.ax = plt.subplots()
 
         # plot data
-        self.ax.plot(self.longitudinal_loads, creep_coefficients, label = rf"W = 3 kg, $\delta$ = {yaw_angle}°")
+        self.ax.plot(
+            longitudinal_creep, self.longitudinal_force,
+            label = rf"W = 3 kg, $\delta$ = {yaw_angle}°"
+        )
+
+        # perform linear regression
+        m, c = np.polyfit(longitudinal_creep, self.longitudinal_force, 1)
+        xx = np.linspace(
+            np.min(longitudinal_creep), np.max(longitudinal_creep), Inputs.N
+        )
+
+        # store longitudinal creep coefficient
+        self.constants[yaw_angle] = {
+            "C_11": m
+        }
+
+        # plot line of best fit
+        self.ax.plot(
+            xx, m * xx + c,
+            label = (
+                rf"Line of best fit: m = {m:.3g} N, c = {c:.3g} N"
+                "\n"
+                rf"$C_{{11}}$ = {m:.3g} N"
+            )
+        )
 
         # configure plot
         self.ax.grid(True)
-        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        self.ax.set_xlabel('Force Applied (N)')
-        self.ax.set_ylabel('Longitudinal Creep')
-        self.ax.set_title("Combined Lateral and Longitudinal Creep")
-        plt.tight_layout()
+        self.ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        self.ax.set_xlabel("Longitudinal Creep", fontsize = Inputs.fontsize)
+        self.ax.set_ylabel("Longitudinal Force (N)", fontsize = Inputs.fontsize)
+        self.ax.set_title(
+            rf"Combined Lateral and Longitudinal Creep",
+            fontsize = Inputs.titlesize
+        )
 
         # read data from transducers
         data = np.genfromtxt(Inputs.file_names[f"lateral_and_longitudinal_creep_delta_{yaw_angle}"], delimiter = ",")
         data = data.transpose()
 
-        print(f"data: {data}")
-
         # create new plot
-        fig, ax = plt.subplots(figsize = Inputs.figsize)
+        fig, ax = plt.subplots()
 
-        mean_values = np.zeros(len(self.longitudinal_loads))
+        # initialise empty array of mean values
+        mean_values = np.zeros(len(self.longitudinal_force))
 
         # loop for each applied longitudinal load value
         for index, weight in enumerate(self.weights):
@@ -408,18 +495,20 @@ class Results:
             y_masked = data[2 * index + 1][mask]
 
             # plot masked data
-            ax.plot(x_masked, y_masked, label = rf"W = {weight} kg, $\delta$ = {yaw_angle}°")
+            ax.plot(x_masked, y_masked, label = rf"T = {weight} kg, $\delta$ = {yaw_angle}°")
 
             # get mean values of lateral transducer readings based on percentile data
-            #percentile = 0.05
             mean_values[index] = np.max(data[2 * index + 1])
 
+        # configure plot
         ax.grid(True)
-        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        ax.set_xlabel('Longitudinal Transducer Reading (V)')
-        ax.set_ylabel('Side Force Transducer Reading (V)')
-        ax.set_title("Combined Lateral and Longitudinal Creep")
-        plt.tight_layout()
+        ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        ax.set_xlabel("Longitudinal Transducer Reading (V)", fontsize = Inputs.fontsize)
+        ax.set_ylabel("Side Force Transducer Reading (V)", fontsize = Inputs.fontsize)
+        ax.set_title("Combined Lateral and Longitudinal Creep", fontsize = Inputs.titlesize)
+
+        # save plot
+        save_figure(fig, ax, f"lateral_and_longitudinal_creep_transducer_{yaw_angle}.png")
 
         # get forwards-calibrated lateral force values
         mean_values_N = self.forwards_calibrate(mean_values)
@@ -428,35 +517,87 @@ class Results:
         if not hasattr(self, "fig2"):
 
             # create plot
+            self.fig2, self.ax2 = plt.subplots()
 
-            self.fig2, self.ax2 = plt.subplots(figsize = Inputs.figsize)
+        # plot data
+        self.ax2.plot(
+            self.longitudinal_force, mean_values_N,
+            label = rf"W = 3 kg, $\delta$ = {yaw_angle}°"
+        )
 
-        self.ax2.plot(self.longitudinal_loads, mean_values_N, label = rf"$\delta$ = {yaw_angle}")
+        # get values of lateral and longitudinal creep to consider
+        alpha = np.tan(deg_to_rad(yaw_angle))
+        xixi = np.linspace(np.min(longitudinal_creep), np.max(longitudinal_creep), Inputs.N)
+
+        # get theoretical curve
+        W = 3
+        Z = W * Inputs.g
+        mu = self.constants[f"{W}_kg"]["mu"]
+        """C = self.constants[yaw_angle]["C_11"]
+        xi_0 = mu * Z / (2 * C)
+
+        # calculate lateral and longitudinal forces
+        Y_theory = (
+            mu * Z * alpha / np.sqrt(xixi)
+            * (1 - xi_0 / (2 * np.sqrt(xixi**2 + alpha**2)))
+        )
+        X_theory = Y_theory * xixi / alpha
+
+        # plot theoretical curve
+        self.ax2.plot(Y_theory, X_theory, label = rf"Theoretical, $\delta$ = {yaw_angle}°, C = $C_{{11}}$ = {C:.3g}")"""
+
+        # recalculate for other value of C
+        C = self.constants[f"{W}_kg"]["C_22"]
+        xi_0 = mu * Z / (2 * C)
+
+        # calculate lateral and longitudinal forces
+        Y_theory = (
+            mu * Z * alpha / np.sqrt(xixi)
+            * (1 - xi_0 / (2 * np.sqrt(xixi**2 + alpha**2)))
+        )
+        X_theory = Y_theory * xixi / alpha
+
+        # plot theoretical curve
+        self.ax2.plot(Y_theory, X_theory, label = rf"Theoretical, $\delta$ = {yaw_angle}°, C = $C_{{22}}$ = {C:.3g} N")
 
         # configure plot
         self.ax2.grid(True)
-        self.ax2.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-        self.ax2.set_xlabel('Longitudinal Force (N)')
-        self.ax2.set_ylabel('Lateral Force (N)')
-        self.ax2.set_title("Combined Lateral and Longitudinal Creep")
-        plt.tight_layout()
-
+        self.ax2.legend(loc = "center left", bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+        self.ax2.set_xlabel("Longitudinal Force (N)", fontsize = Inputs.fontsize)
+        self.ax2.set_ylabel("Lateral Force (N)", fontsize = Inputs.fontsize)
+        self.ax2.set_title("Combined Lateral and Longitudinal Creep", fontsize = Inputs.titlesize)
 
 # main function
 def main():
 
-    # run functions corresponding to each report section
+    # calibration
     results = calibration()
+
+    # effect of speed
     results.effect_of_speed()
+
+    # effect of normal load
     results.effect_of_normal_load("3_kg")
     results.effect_of_normal_load("5_kg")
+    save_figure(results.fig, results.ax, f"effect_of_normal_load_forces.png")
     delattr(results, "fig")
+
+    # no load creep
     results.no_load_creep()
+
+    # applied torque creep
     results.applied_torque_creep("3_kg")
     results.applied_torque_creep("5_kg")
+    save_figure(results.fig, results.ax, f"applied_torque_creep.png")
     delattr(results, "fig")
+
+    # lateral and longitudinal creep
     results.lateral_and_longitudinal_creep(5)
     results.lateral_and_longitudinal_creep(15)
+    save_figure(results.fig, results.ax, f"lateral_and_longitudinal_creep.png")
+    save_figure(results.fig2, results.ax2, f"lateral_and_longitudinal_creep_forces.png")
+    delattr(results, "fig")
+    delattr(results, "fig2")
 
 # calibration function
 def calibration():
@@ -486,18 +627,18 @@ def calibration():
     mean_hysteresis_percent = 100 * mean_hysteresis / (np.max(data[1]) - np.min(data[1]))
 
     # create plot
-    fig, ax = plt.subplots(figsize = Inputs.figsize)
+    fig, ax = plt.subplots()
 
     # plot raw data and lines of best fit
     ax.plot(
-        weights_N, data[1], marker = '.', markersize = 6, color = 'C0',
+        weights_N, data[1], marker = '.', markersize = 8, color = 'C0',
         label = "Measurements"
     )
     ax.plot(
-        xx, yy_1, color = 'C1', label = f"Line of best fit: m = {m_1:.3g}, c = {c_1:.3g}"
+        xx, yy_1, color = 'C1', label = f"Line of best fit: m = {m_1:.3g} V/N, c = {c_1:.3g} V"
     )
     ax.plot(
-        xx, yy_2, color = 'C2', label = f"Line of best fit: m = {m_2:.3g}, c = {c_2:.3g}"
+        xx, yy_2, color = 'C2', label = f"Line of best fit: m = {m_2:.3g} V/N, c = {c_2:.3g} V"
     )
 
     # display mean hysteresis separation on legend
@@ -506,11 +647,13 @@ def calibration():
 
     # configure plot
     ax.grid()
-    ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5))
-    ax.set_xlabel('Force Applied (N)')
-    ax.set_ylabel('Side Force Transducer Reading (V)')
-    ax.set_title("Load Cell Calibration Results")
-    plt.tight_layout()
+    ax.legend(loc = 'center left', bbox_to_anchor = (1, 0.5), fontsize = Inputs.fontsize)
+    ax.set_xlabel('Applied Force (N)', fontsize = Inputs.fontsize)
+    ax.set_ylabel('Side Force Transducer Reading (V)', fontsize = Inputs.fontsize)
+    ax.set_title("Load Cell Calibration Results", fontsize = Inputs.titlesize)
+
+    # save plot
+    save_figure(fig, ax, f"calibration.png")
 
     # store calibration coefficients
     return Results(m_1, c_1, m_2, c_2)
@@ -521,6 +664,40 @@ def deg_to_rad(x):
     # convert from degrees to radians and return
     return x * np.pi / 180
 
+# save_figure function
+def save_figure(fig, ax, name):
+
+    # draw canvas to render dimensions and get legend
+    fig.canvas.draw()
+    legend = ax.get_legend()
+
+    if legend == None:
+
+        legend_width = 0
+
+    else:
+
+        legend_width = legend.get_window_extent().width / fig.dpi
+
+    total_width = Inputs.left_margin + Inputs.ax_width + legend_width + Inputs.right_margin
+
+    # set total figure width and height
+    fig.set_size_inches(
+        total_width,
+        Inputs.ax_height
+    )
+
+    # explicitly pin axes position in inch-accurate fractions
+    ax.set_position([
+        Inputs.left_margin / total_width,
+        Inputs.bottom_margin / Inputs.ax_height,
+        Inputs.ax_width / total_width,
+        Inputs.plot_height / Inputs.ax_height
+    ])
+
+    # save plot
+    fig.savefig(name, dpi = Inputs.dpi, bbox_inches = "tight")
+
 # on script execution
 if __name__ == "__main__":
 
@@ -528,4 +705,4 @@ if __name__ == "__main__":
     main()
 
     # show all plots
-    plt.show()
+    #plt.show()
